@@ -1,0 +1,77 @@
+app:
+  name: "Personalized News Briefing"
+  version: "0.1.0"
+  environment: "development"  # development, staging, production
+  debug: true
+  
+llm:
+  primary_model: "gpt-4-turbo-preview"
+  fallback_model: "gpt-3.5-turbo"
+  temperature: 0.3
+  max_tokens: 1500
+  timeout_seconds: 30
+  retry_max_attempts: 3
+  retry_base_delay: 1.0
+
+embeddings:
+  model: "text-embedding-3-large"
+  dimension: 3072
+  batch_size: 32
+  timeout_seconds: 30
+
+vector_store:
+  type: "chroma"  # chroma | pinecone
+  chroma_db_path: "./data/chroma_db"
+  collection_name: "news_chunks"
+
+database:
+  type: "postgresql"
+  host: "localhost"
+  port: 5432
+  name: "personalized_news"
+  user: "postgres"
+  password: "postgres"  # Use env var in production
+  echo: false  # Set true for SQL logging
+
+ingestion:
+  schedule_minutes: 60
+  max_article_size_chars: 50000
+  content_hash_check: true
+  dedup_days: 30
+
+retrieval:
+  default_k: 5
+  max_k: 10
+  time_window_days: 7
+  metadata_filter_enabled: true
+
+grounding:
+  stage_a_enabled: true  # Rule-based
+  stage_b_enabled: true  # LLM-as-judge
+  confidence_threshold: 0.7
+  min_citation_coverage: 0.8
+
+safety:
+  max_query_length: 500
+  max_article_length: 50000
+  injection_detection_enabled: true
+  content_sanitization_enabled: true
+  rate_limit_per_minute: 60
+
+email:
+  enabled: true
+  service: "sendgrid"  # sendgrid | ses
+  from_address: "briefing@personalizednews.local"
+  send_time_utc: "08:00"  # 8 AM UTC
+
+observability:
+  log_level: "INFO"
+  structured_logging: true
+  request_id_header: "X-Request-ID"
+  trace_enabled: false
+
+evaluation:
+  enabled: true
+  grounding_pass_rate_threshold: 0.90
+  schema_validity_threshold: 0.95
+  regression_gate_enabled: true

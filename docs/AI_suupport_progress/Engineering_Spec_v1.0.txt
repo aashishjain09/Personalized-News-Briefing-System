@@ -1,0 +1,459 @@
+Engineering Specification - Production Grade AI Personalized News Briefing System
+Document Type: Engineering Spec (Build Ready)
+Owner: Ashish Jain (AI/ML Engineer)
+Version: v1.0 (Draft for implementation)
+Date: 13 Jan 2026
+Project Codename: ai-news-briefing-system
+________________________________________
+0) Provenance, Scope Boundaries, and “No Hallucination” Contract
+0.1 What this spec is based on (ground truth)
+This specification is grounded in:
+•	Your project idea definition from the uploaded Ideas.pdf (news ingestion → preprocessing → embeddings + vector DB → retriever tool → agent decides retrieval → RAG summarization → memory update → deployment as chat + daily digest).
+•	The “production-grade, layered architecture” principles from Fareed Khan’s “7 layers” approach: modular codebase, settings management, persistence, security safeguards, resilient service layer, stateful multi-agent orchestration (LangGraph + checkpointing), API gateway, observability and evaluation.
+0.2 No hallucination / ambiguity rules for this spec
+•	No claim is presented as a fact unless it is either:
+1.	explicitly required by your plan, or
+2.	explicitly described in the referenced sources above.
+•	Any implementation choice not fixed by your plan is labeled Decision Required or Option.
+0.3 Objective
+Build a resilient end to end agentic AI system that delivers personalized daily news briefings and interactive Q&A over ingested articles with:
+•	mandatory grounding (citations),
+•	security hardening against prompt injection,
+•	token/cost optimization,
+•	comprehensive evaluation and observability,
+consistent with a “production-grade layered system” philosophy.
+________________________________________
+1) Product Definition
+1.1 User stories
+1.	Daily Briefing: As a user, I receive a concise daily digest focused on my interests (topics + preferences), with citations to source articles.
+2.	Interactive Q\&A: As a user, I can ask “What are the latest developments in X?” and receive a synthesis grounded in recently ingested news, with citations.
+3.	Personalization: As a user, the system learns from my feedback (like/dislike/save) to refine future briefings.
+4.	Safety: As an operator, I can trust the system to avoid ungrounded claims and resist prompt injection attempts from user input or retrieved articles.
+5.	Operability: As an operator, I can monitor latency, error rates, token spend, grounding pass/fail rate, and retrieval quality.
+1.2 Non goals (v1)
+•	Full “web browsing” or arbitrary web scraping (beyond configured RSS/News API sources).
+•	Financial advice, political persuasion, or other high-risk content generation.
+•	Real time “breaking news” guarantees (depends on ingestion schedule and sources).
+________________________________________
+2) Requirements
+2.1 Functional requirements (FR)
+FR 1 Ingestion
+•	Periodically ingest articles from RSS feeds and/or a News API (config-driven).
+•	Deduplicate by URL hash; store raw + normalized text.
+FR 2 Indexing
+•	Chunk, embed, and store article chunks in a vector store (e.g., Chroma/Pinecone).
+FR 3 Retrieval
+•	Implement a retriever tool that returns top K relevant chunks with metadata (url/title/source/published_at).
+FR 4 Agentic Q\&A
+•	Agent decides whether to retrieve or answer directly; when retrieval is required, it must use retriever tool.
+•	Responses must include citations when factual claims are made.
+FR 5 Daily Briefing
+•	Generate a daily digest for each user using:
+o	user profile memory (explicit topics + learned preferences),
+o	retrieval over recent news window,
+o	synthesis with citations.
+FR 6 Memory Update
+•	Store user feedback and update long-term profile memory for personalization.
+FR 7 API/UX
+•	Provide API endpoints for chat, feedback, and daily briefing delivery (email/markdown). (Delivery channel is a decision.)
+2.2 Non functional requirements (NFR)
+•	NFR 1 Groundedness: “No citation → no factual answer.”
+•	NFR 2 Resilience: retries + backoff for external calls; circuit breakers; graceful degradation (fallback model or partial response).
+•	NFR 3 Security: sanitize inputs and retrieved text; detect prompt injection patterns; enforce strict schema output.
+•	NFR 4 Cost control: token budgeting; dynamic retrieval K; caching for embeddings & repeated queries.
+•	NFR 5 Observability: tracing, structured logs with request IDs, metrics for grounding pass rate and token spend.
+•	NFR 6 Testability: unit + integration + adversarial tests; evaluation harness with regression gates.
+________________________________________
+3) Key Decisions (to be locked; defaults provided)
+3.1 Decisions required
+1.	Deployment posture: Personal-only vs SaaS-style (auth, multi-user).
+2.	Ingestion sources: RSS-only (simpler) vs RSS + News API.
+3.	Vector store: local (Chroma) vs managed (Pinecone).
+4.	Delivery channel: email digest vs web UI vs Teams/Slack bot.
+3.2 Default choices for v1 (recommended)
+•	RSS-first ingestion (lowest friction); optionally add News API adapter later.
+•	Chroma local for development; keep adapter interface so Pinecone can be swapped later.
+•	API + markdown digest output (email integration optional).
+•	Auth optional: implement minimal API key / token guard even for personal use to align with production patterns.
+These defaults are not “facts”; they are recommended implementation choices consistent with your plan and the production-grade layering approach.
+________________________________________
+4) Architecture Overview (Layered, Production Grade)
+This system follows a layered architecture consistent with “production-grade agentic systems” principles: modular separation, persistence, safeguards, resilient services, stateful orchestration, API gateway, and observability/evaluation.
+4.1 High-level architecture diagram
+ Notes:
+•	The idea’s required pipeline stages (intake, preprocessing, embedding/index, retriever tool, agent interaction, summarization, memory update, deployment) are explicitly represented.
+•	Resilience, safeguards, observability are drawn from the “production-grade layers” framing.
+________________________________________
+5) Data Model & Persistence
+5.1 Relational entities (SQL)
+User
+•	user_id (UUID or int)
+•	email (optional if SaaS)
+•	created_at
+UserProfile
+•	user_id
+•	explicit_topics (array/string JSON)
+•	blocked_topics (array)
+•	interest_embedding_ref (pointer/ID if stored in vector store)
+•	preferences (JSON: briefing_length, tone, time_window_days)
+Article
+•	article_id (sha256(url))
+•	url, title, source, published_at
+•	raw_text, clean_text
+•	ingested_at
+•	content_hash (for change detection)
+Chunk
+•	chunk_id
+•	article_id
+•	chunk_text
+•	metadata_json (url/title/source/published_at)
+FeedbackEvent
+•	event_id
+•	user_id
+•	article_id (optional)
+•	signal (like/dislike/save/skip)
+•	timestamp
+•	comment (optional)
+BriefingRun
+•	run_id
+•	user_id
+•	date
+•	status (success/fail)
+•	citations (array)
+•	token_usage (json)
+•	latency_ms
+•	grounding_pass (bool)
+AgentThread
+•	thread_id
+•	user_id
+•	created_at
+•	last_state_checkpoint_ref (if LangGraph checkpointing)
+5.2 Vector store collections
+•	news_chunks: embeddings of chunked article content
+•	(Optional) user_memory: embeddings representing user interests / topics / feedback summaries
+5.3 Idempotency & dedup
+•	Primary dedup key: article_id = sha256(url)
+•	Re-ingestion should:
+o	skip if article_id already exists and content_hash unchanged
+o	upsert if content changed (rare for news, but possible)
+________________________________________
+6) Core Workflows
+6.1 Ingestion workflow (scheduled)
+Trigger: Cron / scheduler (e.g., every 30–60 minutes)
+1.	Fetch source feed payload(s)
+2.	Parse items → normalize fields
+3.	Validate source authenticity / allowlist domain
+4.	Sanitize content (remove scripts, collapse whitespace, enforce max size)
+5.	Dedup by URL hash
+6.	Chunk clean text
+7.	Embed in batches
+8.	Upsert chunks into vector DB with metadata
+9.	Persist article metadata in SQL
+10.	Emit metrics/logs for ingestion success/failure
+6.2 Q\&A workflow (agentic)
+Trigger: POST /api/v1/chat/query
+State machine nodes (LangGraph-ready):
+1.	LoadProfile
+2.	SanitizeInput
+3.	DecideRetrieve (agent decides retrieval vs direct)
+4.	RetrieveTopK (retriever tool)
+5.	SynthesizeAnswer
+6.	ValidateSchema
+7.	GroundingCheck (citations required)
+8.	UpdateMemoryAsync (feedback or implicit signals)
+9.	Respond
+6.3 Daily briefing workflow
+Trigger: scheduler or POST /api/v1/briefing/generate
+1.	Load profile (topics, blocked topics, preferences)
+2.	Determine time window (default last 24h; configurable)
+3.	Retrieve per-topic clusters + top headlines relevant to user
+4.	Deduplicate sources
+5.	Synthesize briefing (structured output + citations)
+6.	Validate schema + grounding
+7.	Persist briefing run + metrics
+8.	Deliver output (markdown/email)
+________________________________________
+7) Agent Orchestration Design (LangGraph patterns)
+The production-grade reference emphasizes stateful orchestration, checkpointing, memory integration, and tool calling for reliability.
+7.1 Agent state definition (typed)
+AgentState fields (Pydantic or TypedDict)
+•	request_id
+•	user_id
+•	mode (qa | briefing)
+•	query (for QA)
+•	profile (snapshot)
+•	retrieval_needed (bool)
+•	retrieved_chunks (list[ChunkRef])
+•	draft_output
+•	citations (list[url])
+•	grounding_pass (bool)
+•	token_budget (inputs/outputs)
+•	errors (typed error objects)
+7.2 Tools (first-class)
+•	retriever_tool(query, filters, k) -> List[ChunkRef]
+•	feedback_tool(user_id, signal, article_id) -> Ack
+•	time_window_tool(preference) -> {from,to}
+7.3 Checkpointing (optional but recommended)
+•	Persist agent thread state for replay/debug and crash recovery (aligned with “state persistence / checkpointing” emphasis).
+________________________________________
+8) Safety, Grounding & Hallucination Prevention
+The project idea requires RAG grounding, and your plan requires mandatory citations + verification.
+8.1 Mandatory grounding contract
+•	If output contains factual assertions:
+o	Must include citations (URL/source IDs) corresponding to retrieved chunks
+o	Must not cite sources outside retrieval set
+•	If retrieval context is insufficient:
+o	Return a safe response: request clarification or broaden sources/time window
+8.2 Grounding checker (two-stage)
+Stage A: Rule-based
+•	citations exist
+•	each citation maps to retrieved metadata
+•	time window constraints satisfied
+Stage B: Model-assisted verification (optional)
+•	Compare claims to context; remove unsupported claims
+•	Produce a confidence_score and allow output only above threshold
+8.3 Output schema enforcement
+•	All briefings and structured Q\&A must conform to JSON schema (and Pydantic model validation).
+•	If schema validation fails:
+1.	retry with stricter constraints
+2.	fall back to simpler schema
+3.	final fallback: return cached last-good response (if exists)
+________________________________________
+9) Security Hardening
+The production-grade reference explicitly includes rate limiting and sanitization as a dedicated security layer.
+9.1 Threat model (v1)
+•	Indirect prompt injection via article content
+•	Prompt injection via user input
+•	Malicious RSS feed poisoning
+•	Denial-of-wallet/token abuse via long inputs
+•	Data exfil attempts via prompts
+9.2 Controls
+Input controls
+•	Character set restriction
+•	Max length limits (user query, topics, article text)
+•	URL allowlist for RSS domains (config)
+Content sanitization
+•	Strip HTML/JS
+•	Normalize whitespace
+•	Remove non-printing characters
+•	Truncate overly long articles
+Prompt injection detection
+•	Pattern checks for “ignore previous instructions”, “system prompt”, etc.
+•	Treat retrieved content as untrusted and never allow it to override system instructions
+Rate limiting
+•	Endpoint-level limits:
+o	chat
+o	streaming chat
+o	briefing generation
+o	ingestion trigger
+•	Require admin key for ingestion triggers in non-dev
+________________________________________
+10) Reliability & Resilience
+The production-grade reference highlights retries, circuit breakers, model fallback, and connection pooling for reliability.
+10.1 Error taxonomy (typed)
+Define typed exceptions (examples):
+•	RateLimitError
+•	APIConnectionError
+•	TokenLimitError
+•	VectorStoreError
+•	SchemaValidationError
+•	GroundingViolationError
+•	PromptInjectionDetectedError
+10.2 Retry policy
+•	External calls (LLM, ingestion source, embeddings):
+o	exponential backoff
+o	max attempts configurable per endpoint
+10.3 Circuit breaker policy
+•	Trip breaker on:
+o	high error ratio
+o	repeated timeouts
+•	While open:
+o	return cached results if available
+o	degrade gracefully (e.g., “briefing unavailable; try later”)
+10.4 Model fallback
+•	If primary model fails (timeouts/429):
+o	fall back to a smaller/cheaper model
+•	Track fallback rate as a metric (signals cost/availability issues)
+________________________________________
+11) Token & Cost Optimization
+11.1 Token budgeting
+•	Compute token estimates for:
+o	user query
+o	retrieved context
+o	system prompts
+o	expected output size
+•	Enforce budgets:
+o	shrink K
+o	compress context (summary pass)
+o	shorten output format
+11.2 Retrieval optimization
+•	Dynamic K based on query complexity:
+o	simple question → small K
+o	broad multi-topic query → larger K
+•	Enforce recency filters for “latest developments” queries
+11.3 Caching
+•	Cache embeddings for identical chunks (content-hash)
+•	Cache common queries (TTL)
+•	Cache daily briefings per user per date
+________________________________________
+12) Evaluation Framework (Offline + Regression Gates)
+The production-grade reference includes LLM-as-a-judge style evaluation and operational testing emphasis.
+12.1 Datasets
+•	evals/datasets/:
+o	curated RSS snapshot dataset
+o	query set (50–200)
+o	reference briefings (human written or baseline system output)
+12.2 Metrics
+Retrieval
+•	precision\@K
+•	NDCG
+•	coverage by topic
+Generation
+•	structure correctness (schema validity rate)
+•	citation coverage (#citations / #claims)
+•	groundedness pass rate
+Safety
+•	prompt injection resistance score (adversarial suite)
+Latency/Cost
+•	tokens per request
+•	latency percentiles (p50/p95)
+•	fallback frequency
+12.3 Regression gates
+Block release if:
+•	grounding pass rate drops below threshold
+•	schema validity rate drops
+•	token cost per request increases beyond threshold
+•	injection test suite fails
+________________________________________
+13) Observability & Monitoring
+The production-grade reference emphasizes logging/tracing/metrics and monitoring.
+13.1 Structured logging (required)
+Log fields:
+•	request_id
+•	endpoint
+•	user_id (hashed)
+•	retrieval_k
+•	citations_count
+•	token_in/token_out (if available)
+•	latency_ms
+•	grounding_pass
+•	error_type
+13.2 Tracing (recommended)
+Trace spans:
+•	ingestion
+•	retrieval
+•	LLM call
+•	grounding check
+•	schema validation
+•	memory update
+13.3 Metrics dashboard (recommended)
+•	ingestion success rate
+•	retrieval empty rate
+•	grounding failures
+•	token spend per endpoint
+•	latency histograms
+•	fallback model usage
+________________________________________
+14) API Specification (v1)
+Base path: /api/v1
+14.1 POST /chat/query
+Request
+{
+  "userid": "string",
+  "query": "string",
+  "timewindow_days": 3,
+  "stream": false
+}
+Response
+{
+  "answer": "string (markdown)",
+  "citations": ["https://…"],
+  "usedarticles": ["articleid"],
+  "groundingpass": true,
+  "requestid": "uuid"
+}
+14.2 POST /briefing/generate
+Request
+{
+  "userid": "string",
+  "date": "YYYY-MM-DD",
+  "timewindow_hours": 24
+}
+Response
+{
+  "briefingmarkdown": "string",
+  "citations": ["https://…"],
+  "groundingpass": true,
+  "request_id": "uuid"
+}
+14.3 POST /users/{user_id}/profile
+Request
+{
+  "explicittopics": ["AI", "aviation", "renewables"],
+  "blockedtopics": ["celebrity gossip"],
+  "preferences": {
+    "briefinglength": "short|medium|long",
+    "timewindow_days": 3
+  }
+}
+``
+14.4 POST /users/{user_id}/feedback
+Request
+{
+  "signal": "like|dislike|save|skip",
+  "article_id": "sha256(url)",
+  "comment": "optional"
+}
+14.5 POST /admin/ingestion/run (optional / protected)
+Triggers ingestion on-demand.
+________________________________________
+15) Project Structure (Build Artifact)
+Use the repo structure defined in Section 2, with each directory mapping to a layer:
+•	system/ = settings/logging/middleware (Layer 2)
+•	persistence/ = SQL + vector adapters (Layer 3)
+•	safety/ = sanitization + grounding + injection defense (Layer 4)
+•	services/ = resilience patterns (Layer 5)
+•	agent/ = LangGraph graphs + tools + memory (Layer 6)
+•	api/ = gateway endpoints (Layer 7)
+•	evals/ + observability/ = evaluation and monitoring (production-grade emphasis)
+________________________________________
+16) Implementation Plan (Milestones)
+Milestone 0 — Scaffolding (Days 1–2)
+•	Repo structure + Settings + logging + error taxonomy
+•	Pydantic models & DTOs
+Milestone 1 — Ingestion + Index (Days 3–7)
+•	RSS ingestion + parser + dedup
+•	Chunking + embeddings + vector upsert
+•	Store article metadata in SQL
+Milestone 2 — Retrieval + Grounded Q\&A (Days 8–12)
+•	Retriever tool
+•	Q\&A pipeline with schema + grounding enforcement
+Milestone 3 — Personalization + Daily Briefing (Days 13–18)
+•	User profile memory + feedback loop
+•	Daily digest generation + citations
+Milestone 4 — Security + Resilience (Days 19–23)
+•	sanitization + injection tests
+•	rate limits
+•	retry/backoff + circuit breaker + fallback
+Milestone 5 — Evaluation + Observability (Days 24–30)
+•	offline eval harness + regression gates
+•	dashboards/metrics + traces
+________________________________________
+17) Runbook (Operational)
+17.1 Local dev
+•	Start SQL + vector store
+•	Run ingestion
+•	Validate retrieval with sample queries
+•	Generate briefing for test profile
+17.2 Failure modes & responses
+•	LLM 429/timeouts: trigger backoff; fallback model; return partial if needed
+•	Vector store down: return “cannot retrieve sources”; refuse factual answers
+•	Ingestion fails: continue with other feeds; alert via logs/metrics
+•	Schema failures: retry; fallback schema; return cached last-good output
+________________________________________
+18) Appendix — How this spec aligns with your source materials
+•	The end-to-end pipeline and features (RAG, ingestion, vector DB, daily briefings, user memory) directly match the “Personalized News Briefing Agent” description in your ideas document.
+•	The layered approach (modularity, safeguards, resilience, API gateway, observability, evaluation) aligns with the “production-grade agentic system” framing and the associated implementation blueprint described in the 7-layer guide.
+________________________________________
+Next Step (so we lock this spec into “build mode”)
+Reply with your choices for the 4 “Decision Required” items (Section 3.1).\ Once you do, I will produce the Implementation Checklist + exact file-level stubs (function signatures, class names, module responsibilities) in a way that you can execute day-by-day without ambiguity—while preserving your “no hallucination” requirement.

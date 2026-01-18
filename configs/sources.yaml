@@ -1,0 +1,20 @@
+feeds:
+  - name: "BBC News"
+    url: "http://feeds.bbc.co.uk/news/rss.xml"
+    source_id: "bbc_news"
+    category: "general"
+    enabled: true
+    
+  - name: "Hacker News"
+    url: "https://news.ycombinator.com/rss"
+    source_id: "hn_news"
+    category: "tech"
+    enabled: true
+    
+  - name: "Aviation Today"
+    url: "https://www.aviationtoday.com/feed/"
+    source_id: "aviation_today"
+    category: "aviation"
+    enabled: true
+
+# Add more feeds as needed

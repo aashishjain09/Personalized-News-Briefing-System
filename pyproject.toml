@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personalized-news-briefing"
+version = "0.1.0"
+description = "Production-grade AI personalized news briefing system with RAG, grounding, and safety"
+requires-python = ">=3.9"
+authors = [
+    {name = "Ashish Jain", email = "ashish@example.com"}
+]
+keywords = ["ai", "rag", "news", "briefing", "langgraph", "fastapi"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "black", "ruff", "pre-commit"]
+prod = ["uvicorn[standard]", "gunicorn"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]

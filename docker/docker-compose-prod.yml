@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: personalized_brief_db
+    environment:
+      POSTGRES_DB: personalized_brief
+      POSTGRES_USER: news_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U news_user -d personalized_brief"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    container_name: personalized_brief_cache
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password_change_me}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  # Chroma vector database
+  chroma:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: personalized_brief_vectors
+    environment:
+      IS_PERSISTENT: "true"
+      PERSIST_DIRECTORY: /chroma_data
+      ALLOW_RESET: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  # FastAPI application
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: personalized_brief_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://news_user:${DB_PASSWORD:-secure_password_change_me}@postgres:5432/personalized_brief
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password_change_me}@redis:6379/0
+      CHROMA_URL: http://chroma:8000
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8080:8000"
+    volumes:
+      - ..:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # Prometheus metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: personalized_brief_metrics
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - app_network
+    depends_on:
+      - app
+
+  # Grafana dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: personalized_brief_dashboards
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - app_network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  chroma_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge
